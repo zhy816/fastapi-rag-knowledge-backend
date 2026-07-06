@@ -18,11 +18,40 @@
 - RAG
 - LLM API
 
+## 当前进度
+
+### 阶段 0：项目初始化
+
+已完成：
+
+- 初始化 FastAPI 项目结构
+- 创建并配置虚拟环境
+- 安装基础依赖
+- 配置 `.gitignore`
+- 创建 `.env.example`
+- 创建基础 README
+- 推送到 GitHub
+
+### 阶段 1：数据库连接与核心数据表
+
+已完成：
+
+- 使用 `pydantic-settings` 读取 `.env` 配置
+- 使用 SQLAlchemy Async 创建 MySQL 异步连接
+- 定义 ORM Base 和公共时间字段
+- 创建 4 张核心数据表模型：
+  - `users`
+  - `documents`
+  - `chat_sessions`
+  - `chat_messages`
+- 使用 FastAPI lifespan 在项目启动时自动建表
+- MySQL 中已成功生成 4 张核心表
+
 ## 当前计划
 
 - [x] 初始化项目结构
-- [ ] 配置数据库连接
-- [ ] 设计基础数据表
+- [x] 配置数据库连接
+- [x] 设计基础数据表
 - [ ] 实现用户模块
 - [ ] 实现文档上传模块
 - [ ] 实现文档解析与切分
