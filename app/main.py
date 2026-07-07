@@ -1,9 +1,8 @@
 from contextlib import asynccontextmanager
-
 from fastapi import FastAPI
-
 from app.db.base import Base
 from app.db.session import async_engine
+from app.api.user import router as user_router
 
 
 @asynccontextmanager
@@ -23,6 +22,7 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+app.include_router(user_router)
 
 
 @app.get("/")
