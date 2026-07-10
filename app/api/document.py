@@ -2,14 +2,18 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import delete, select
 
 from app.db.session import get_db
 from app.models.document import Document
 from app.models.user import User
 from app.schemas.document import DocumentRead
 
+from app.models.document_chunk import DocumentChunk
+from app.schemas.document_chunk import DocumentChunkRead, DocumentParseResult
+from app.services.document_parser import DocumentParseError, parse_document_file
+from app.services.text_splitter import split_text
 
 router = APIRouter(
     prefix="/documents",
@@ -31,7 +35,7 @@ async def upload_document(
     user_id: int = Form(...), # 前端要传一个 user_id，而且它来自表单数据
         # 这个 ... 表示：必填项。 这个Form表示 这个参数从表单字段里拿，而且必须传
         # 从表单里取普通文本。
-    file: UploadFile = File(...), # 从表单里取上传文件。
+    file: UploadFile = File(...), # 从表单里取上传文件。 这个就是表单里上传文件的功能
     db: AsyncSession = Depends(get_db),
 ):
     # 第一，检查用户是否存在：
@@ -56,6 +60,14 @@ async def upload_document(
 
     UPLOAD_DIR.mkdir(exist_ok=True)
     # 如果 uploads 文件夹不存在，就创建它；如果已经存在，也不要报错。
+
+    # 但如果以后项目部署到服务器上，那就变成：
+    # 用户电脑里的文件
+    # 上传到服务器上的 FastAPI 程序
+    # 服务器把文件保存到服务器的uploads / 目录
+    #
+    # 也就是现在本地开发时，“用户电脑”和“服务器”刚好是同一台电脑，
+    # 所以你感觉像是在本地文件夹之间搬了一份。实际上逻辑是客户端上传文件给后端，后端保存一份
 
     saved_filename = f"{uuid4().hex}_{original_filename}"
     # 保存上传文件的命名规则
@@ -101,6 +113,130 @@ async def list_documents(
 
     return documents
 
+# 遍历所有切好的 chunks。
+#
+# 每拿到一段文本：
+# 1. 给它一个编号 index
+# 2. 创建一条 document_chunks 表记录
+# 3. 记录它属于哪个文档
+# 4. 记录它是第几段
+# 5. 记录它的文本内容
+# 6. 记录它有多少字符
+# 7. 把它加入数据库待保存队列
+@router.post("/{document_id}/parse", response_model=DocumentParseResult)
+async def parse_document(
+    document_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = select(Document).where(Document.id == document_id)
+    result = await db.execute(stmt)
+    document = result.scalar_one_or_none()
+
+    if document is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Document not found",
+        )
+
+    document.status = "processing"
+    await db.commit()
+
+    try:
+        # 这里就调用了你刚才写的 services/document_parser.py。
+        text = parse_document_file(
+            file_path=document.file_path,
+            file_type=document.file_type,
+        )
+
+        # 4. 切 chunks
+        chunks = split_text(text)
+
+        if not chunks:
+            document.status = "failed"
+            await db.commit()
+            raise HTTPException(
+                status_code=400,
+                detail="No text content extracted from document",
+            )
+
+        # 如果这个文档之前解析过，先删除旧 chunks，避免重复插入
+        # 这个非常重要。
+        # 因为你可能对同一个文档点两次 parse。
+        # 如果不删旧 chunks，第二次插入时就会触发我们之前写的联合唯一约束：
+        delete_stmt = delete(DocumentChunk).where(
+            DocumentChunk.document_id == document_id
+        )
+        await db.execute(delete_stmt)
+
+        for index, chunk in enumerate(chunks):
+            # 所以这句：
+            # for index, chunk in enumerate(chunks):
+            # 意思是：
+            # 每次从 chunks 里面拿出一段文本 chunk，
+            # 同时给它一个顺序编号 index。
+            db_chunk = DocumentChunk(
+                document_id=document_id,
+                chunk_index=index,
+                content=chunk,
+                char_count=len(chunk),
+            )
+            # 这里是在创建一个 ORM 对象。
+            # 你可以理解成：准备往 document_chunks 表里插入一行数据。
+            db.add(db_chunk)
+
+        document.status = "completed"
+        await db.commit()
+
+        return DocumentParseResult(
+            document_id=document.id,
+            status=document.status,
+            chunk_count=len(chunks),
+        )
+
+    except HTTPException:
+        raise
+
+    except DocumentParseError as e:
+        document.status = "failed"
+        await db.commit()
+        raise HTTPException(
+            status_code=400,
+            detail=str(e),
+        )
+
+    except Exception as e:
+        document.status = "failed"
+        await db.commit()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error while parsing document: {e}",
+        )
+
+
+@router.get("/{document_id}/chunks", response_model=list[DocumentChunkRead])
+async def list_document_chunks(
+    document_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = select(Document).where(Document.id == document_id)
+    result = await db.execute(stmt)
+    document = result.scalar_one_or_none()
+
+    if document is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Document not found",
+        )
+
+    stmt = (
+        select(DocumentChunk)
+        .where(DocumentChunk.document_id == document_id)
+        .order_by(DocumentChunk.chunk_index)
+    )
+    result = await db.execute(stmt)
+    chunks = result.scalars().all()
+
+    return chunks
 
 # 这个就是根据输入的文件的id 查找并返回具体的文件对象
 @router.get("/{document_id}", response_model=DocumentRead)
