@@ -7,6 +7,21 @@ from app.models.base import Base
 
 # 这个表的作用是：保存文档切分后的每一小段文本。
 # 比如你上传了一个 PDF，解析后切成 20 段，那么 document_chunks 表里就会插入 20 行
+
+
+"""
+这张表是干嘛的？
+
+它用来保存文档切分后的每一段文本。
+
+比如一个文档解析后切成 3 段，那么数据库里会有：
+
+document_id | chunk_index | content
+1           | 0           | 第一段内容
+1           | 1           | 第二段内容
+1           | 2           | 第三段内容
+
+"""
 class DocumentChunk(Base):
     __tablename__ = "document_chunks"
 
@@ -15,6 +30,7 @@ class DocumentChunk(Base):
             "document_id",
             "chunk_index",
             name="uq_document_chunk_index",
+        #     这个规则的意义是：保证一个文档里的 chunk 顺序不会乱。
         ),
     )
     # 在 document_chunks 表里，同一个 document_id 下面，chunk_index 不能重复。

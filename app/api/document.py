@@ -11,14 +11,28 @@ from app.models.user import User
 from app.schemas.document import DocumentRead
 
 from app.models.document_chunk import DocumentChunk
-from app.schemas.document_chunk import DocumentChunkRead, DocumentParseResult
+from app.schemas.document_chunk import (
+    DocumentChunkRead,
+    DocumentParseResult,
+    DocumentVectorizeResult,
+    DocumentSearchRequest,
+    DocumentSearchItem,
+    DocumentSearchResult,
+)
 from app.services.document_parser import DocumentParseError, parse_document_file
 from app.services.text_splitter import split_text
+from app.services.embedding_service import EmbeddingService
+from app.services.vector_store import VectorStore
 
 router = APIRouter(
     prefix="/documents",
     tags=["documents"],
 )
+embedding_service = EmbeddingService()
+vector_store = VectorStore()
+# 这里把对象创建在路由函数外面非常重要。
+# 如果放在接口里面：那么每请求一次接口，都可能重新初始化一次模型，会很慢。
+# 现在 模块加载时创建一次，之后每次请求都复用同一个模型对象。
 
 UPLOAD_DIR = Path("uploads") # 上传的文件统一保存到项目根目录下的 uploads 文件夹里。
 ALLOWED_FILE_TYPES = {"pdf", "docx", "txt"}
@@ -159,6 +173,10 @@ async def parse_document(
                 detail="No text content extracted from document",
             )
 
+        # 重新解析文档时，删除 ChromaDB 中原来的旧向量
+        # 因为重新切块后，旧向量已经不再对应最新的 chunks
+        vector_store.delete_document(document_id)
+        
         # 如果这个文档之前解析过，先删除旧 chunks，避免重复插入
         # 这个非常重要。
         # 因为你可能对同一个文档点两次 parse。
@@ -238,6 +256,151 @@ async def list_document_chunks(
 
     return chunks
 
+@router.post(
+    "/{document_id}/vectorize",
+    response_model=DocumentVectorizeResult,
+)
+async def vectorize_document(
+    document_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    # 1. 查询文档是否存在
+    stmt = select(Document).where(Document.id == document_id)
+    result = await db.execute(stmt)
+    document = result.scalar_one_or_none()
+
+    if document is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Document not found",
+        )
+
+    # 2. 查询这份文档的所有 chunks
+    stmt = (
+        select(DocumentChunk)
+        .where(DocumentChunk.document_id == document_id)
+        .order_by(DocumentChunk.chunk_index)
+    )
+
+    result = await db.execute(stmt)
+    chunks = result.scalars().all()
+    # 这里是查询该文档的全部 chunks，并按照文章中的先后顺序排列。因为一篇文档对应多个 chunk，所以使用：
+    # result.scalars().all()
+
+    # 3. 如果还没有解析出 chunks，就不能向量化
+    if not chunks:
+        raise HTTPException(
+            status_code=400,
+            detail="Document has no chunks. Parse it first.",
+        )
+
+    try:
+        # 4. 从 ORM 对象中分别取出 chunk ID 和文本
+        chunk_ids = [chunk.id for chunk in chunks]
+        texts = [chunk.content for chunk in chunks]
+
+        # 5. 批量生成向量
+        embeddings = embedding_service.embed_texts(texts)
+
+        # 6. 删除这份文档以前保存的旧向量
+        vector_store.delete_document(document_id)
+
+        # 7. 把新向量保存到 ChromaDB
+        vector_store.add_chunks(
+            document_id=document_id,
+            chunk_ids=chunk_ids,
+            texts=texts,
+            embeddings=embeddings,
+        )
+
+        # 8. 返回结果
+        return DocumentVectorizeResult(
+            document_id=document_id,
+            status="vectorized",
+            vector_count=len(chunks),
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error while vectorizing document: {e}",
+        )
+
+@router.post(
+    "/{document_id}/search",
+    response_model=DocumentSearchResult,
+)
+async def search_document(
+    document_id: int,
+    request: DocumentSearchRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    # 1. 检查文档是否存在
+    stmt = select(Document).where(Document.id == document_id)
+    result = await db.execute(stmt)
+    document = result.scalar_one_or_none()
+
+    if document is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Document not found",
+        )
+
+    # 2. 检查用户的问题是否为空
+    if not request.query.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Query cannot be empty",
+        )
+
+    try:
+        # 3. 把用户的问题转换成向量
+        # 它把用户问题转换成一个 512 维向量。
+        query_embedding = embedding_service.embed_text(
+            request.query
+        )
+
+        # 4. 在 ChromaDB 中搜索相似 chunks
+        search_results = vector_store.search(
+            query_embedding=query_embedding,
+            document_id=document_id,
+            top_k=request.top_k,
+        )
+
+        # 5. 取出 ChromaDB 返回的第一组搜索结果
+        # 最外层代表“第几个问题”。我们一次只搜索一个问题，所以使用：search_results["documents"][0]
+        # 拿到第一个问题对应的全部结果。
+        documents = search_results["documents"][0]
+        metadatas = search_results["metadatas"][0]
+        distances = search_results["distances"][0]
+
+        # 6. 整理成接口需要返回的格式
+        items = []
+
+        for content, metadata, distance in zip(
+            documents,
+            metadatas,
+            distances,
+        ):
+            item = DocumentSearchItem(
+                chunk_id=metadata["chunk_id"],
+                content=content,
+                distance=distance,
+            )
+            items.append(item)
+
+        # 7. 返回最终搜索结果
+        return DocumentSearchResult(
+            document_id=document_id,
+            query=request.query,
+            results=items,
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error while searching document: {e}",
+        )
 # 这个就是根据输入的文件的id 查找并返回具体的文件对象
 @router.get("/{document_id}", response_model=DocumentRead)
 async def get_document(

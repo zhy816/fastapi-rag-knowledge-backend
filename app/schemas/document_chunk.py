@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 # DocumentChunkRead：
 # 查询 chunks 时返回每个 chunk 的格式。
@@ -24,3 +24,31 @@ class DocumentParseResult(BaseModel):
     document_id: int
     status: str
     chunk_count: int
+
+# document_id：刚刚向量化的是哪份文档；
+# status：向量化结果；
+# vector_count：一共生成并保存了多少条向量。
+class DocumentVectorizeResult(BaseModel):
+    document_id: int
+    status: str
+    vector_count: int
+
+# 前端发给后端的数据：
+class DocumentSearchRequest(BaseModel):
+    query: str
+    top_k: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+    )
+# 一条搜索结果的格式：
+class DocumentSearchItem(BaseModel):
+    chunk_id: int
+    content: str
+    distance: float
+
+# 整个接口最终返回：
+class DocumentSearchResult(BaseModel):
+    document_id: int
+    query: str
+    results: list[DocumentSearchItem]

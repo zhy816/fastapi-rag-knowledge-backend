@@ -14,7 +14,9 @@
 - SQLAlchemy Async
 - MySQL
 - Pydantic
-- Chroma / Milvus
+- ChromaDB
+- Sentence Transformers
+- BAAI/bge-small-zh-v1.5
 - RAG
 - LLM API
 
@@ -75,7 +77,7 @@
 - 不支持的文件类型会返回 `400`
 - 不存在的用户会返回 `404`
 
-### 阶段 4：文档解析与文本切分
+### 阶段 4：文档解析与文本切分 ✅
 
 已完成：
 
@@ -89,7 +91,24 @@
 - 解析失败时将文档状态更新为 `failed`
 - 重复解析同一文档时会先删除旧 chunks，避免重复插入
 
+### 阶段 5：文档向量化与语义检索 ✅
 
+已完成：
+
+- 使用 `BAAI/bge-small-zh-v1.5` 作为本地 Embedding 模型
+- 新增 `EmbeddingService`，支持单条文本和批量文本向量化
+- 接入 ChromaDB，并将向量数据持久化到本地 `chroma_db/` 目录
+- 新增 `VectorStore`，封装向量新增、搜索和删除操作
+- 实现文档向量化接口：`POST /documents/{document_id}/vectorize`
+- 实现文档语义搜索接口：`POST /documents/{document_id}/search`
+- ChromaDB 同时保存 chunk 原文、向量及 `document_id`、`chunk_id` 元数据
+- 支持通过 `document_id` 将语义搜索限制在指定文档内
+- 支持通过 `top_k` 控制返回的相关文本块数量
+- 限制 `top_k` 的取值范围为 1 至 20
+- 重复向量化时会先删除旧向量，避免数据重复
+- 重新解析文档时会同步清理 ChromaDB 中的旧向量
+- 已完成多 chunk 批量向量化和语义检索测试
+- `chroma_db/` 已加入 `.gitignore`，本地向量数据不会提交到 Git
 ## 当前计划
 
 - [x] 初始化项目结构
@@ -98,6 +117,9 @@
 - [x] 实现用户模块
 - [x] 实现文档上传模块
 - [x] 实现文档解析与切分
-- [ ] 接入向量数据库
-- [ ] 实现 RAG 问答
+- [x] 接入 Embedding 模型
+- [x] 接入 ChromaDB 向量数据库
+- [x] 实现文档向量化
+- [x] 实现语义检索
+- [ ] 接入大模型并实现 RAG 问答
 - [ ] 保存聊天历史
