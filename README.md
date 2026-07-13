@@ -18,7 +18,9 @@
 - Sentence Transformers
 - BAAI/bge-small-zh-v1.5
 - RAG
-- LLM API
+- OpenAI Python SDK
+- OpenAI Responses API
+- GPT-5.4 mini
 
 ## 当前进度
 
@@ -109,6 +111,24 @@
 - 重新解析文档时会同步清理 ChromaDB 中的旧向量
 - 已完成多 chunk 批量向量化和语义检索测试
 - `chroma_db/` 已加入 `.gitignore`，本地向量数据不会提交到 Git
+
+### 阶段 6：基于大模型的 RAG 问答 ✅
+
+已完成：
+
+- 接入 OpenAI Python SDK 和 Responses API
+- 使用 `gpt-5.4-mini` 生成基于文档资料的自然语言答案
+- 使用 `.env` 安全保存 OpenAI API Key
+- 新增 `LLMService`，封装异步大模型调用
+- 新增 `RAGService`，串联问题向量化、语义检索、上下文拼接和答案生成
+- 实现文档问答接口：`POST /documents/{document_id}/ask`
+- 支持通过 `top_k` 控制用于生成答案的相关文本块数量
+- 返回大模型答案以及对应的 chunk 引用来源
+- 参考资料不足时明确返回无法回答，减少模型编造
+- 文档没有向量数据时直接返回提示，不调用大模型
+- 阶段 5 与阶段 6 共用同一个 `EmbeddingService` 和 `VectorStore` 实例
+- 已完成正常问答、无答案问题、空问题、非法 `top_k`、错误文档 ID 和未向量化文档测试
+
 ## 当前计划
 
 - [x] 初始化项目结构
@@ -121,5 +141,5 @@
 - [x] 接入 ChromaDB 向量数据库
 - [x] 实现文档向量化
 - [x] 实现语义检索
-- [ ] 接入大模型并实现 RAG 问答
+- [x] 接入大模型并实现 RAG 问答
 - [ ] 保存聊天历史

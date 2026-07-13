@@ -18,21 +18,19 @@ from app.schemas.document_chunk import (
     DocumentSearchRequest,
     DocumentSearchItem,
     DocumentSearchResult,
+    DocumentAskRequest,
+    DocumentAskResult,
 )
 from app.services.document_parser import DocumentParseError, parse_document_file
 from app.services.text_splitter import split_text
-from app.services.embedding_service import EmbeddingService
-from app.services.vector_store import VectorStore
+from app.services.embedding_service import embedding_service
+from app.services.vector_store import vector_store
+from app.services.rag_service import rag_service
 
 router = APIRouter(
     prefix="/documents",
     tags=["documents"],
 )
-embedding_service = EmbeddingService()
-vector_store = VectorStore()
-# 这里把对象创建在路由函数外面非常重要。
-# 如果放在接口里面：那么每请求一次接口，都可能重新初始化一次模型，会很慢。
-# 现在 模块加载时创建一次，之后每次请求都复用同一个模型对象。
 
 UPLOAD_DIR = Path("uploads") # 上传的文件统一保存到项目根目录下的 uploads 文件夹里。
 ALLOWED_FILE_TYPES = {"pdf", "docx", "txt"}
@@ -418,3 +416,52 @@ async def get_document(
         )
 
     return document
+
+@router.post(
+    "/{document_id}/ask",
+    response_model=DocumentAskResult,
+)
+async def ask_document(
+    document_id: int,
+    request: DocumentAskRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    # 1. 检查文档是否存在
+    stmt = select(Document).where(Document.id == document_id)
+    result = await db.execute(stmt)
+    document = result.scalar_one_or_none()
+
+    if document is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Document not found",
+        )
+
+    # 2. 检查用户问题是否为空
+    if not request.question.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Question cannot be empty",
+        )
+
+    try:
+        # 3. 执行完整的 RAG 问答流程
+        answer, sources = await rag_service.answer_question(
+            document_id=document_id,
+            question=request.question,
+            top_k=request.top_k,
+        )
+
+        # 4. 整理并返回接口响应
+        return DocumentAskResult(
+            document_id=document_id,
+            question=request.question,
+            answer=answer,
+            sources=sources,
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error while answering question: {e}",
+        )

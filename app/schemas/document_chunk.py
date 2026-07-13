@@ -52,3 +52,14 @@ class DocumentSearchResult(BaseModel):
     document_id: int
     query: str
     results: list[DocumentSearchItem]
+
+class DocumentAskRequest(BaseModel):
+    question: str
+    top_k: int = Field(default=5, ge=1, le=20)
+
+
+class DocumentAskResult(BaseModel):
+    document_id: int
+    question: str
+    answer: str
+    sources: list[DocumentSearchItem]

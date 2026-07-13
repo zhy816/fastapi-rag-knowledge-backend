@@ -105,3 +105,4 @@ class VectorStore:
         self.collection.delete(
             where={"document_id": document_id}
         )
+vector_store = VectorStore()

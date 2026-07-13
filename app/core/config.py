@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     DB_NAME: str
     # 意思是：我这个项目需要从 .env 里读取这 5 个配置
     # 那 Settings() 就会自动把它们读进来。
+    OPENAI_API_KEY: str
 
     # 意思是：告诉 Pydantic，去项目根目录找 .env 文件。
     model_config = SettingsConfigDict(

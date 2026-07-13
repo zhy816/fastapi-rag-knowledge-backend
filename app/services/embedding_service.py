@@ -23,3 +23,5 @@ class EmbeddingService:
     #     ↓
     # 每个文本块生成一个向量
     # list[list[float]]
+
+embedding_service = EmbeddingService()
