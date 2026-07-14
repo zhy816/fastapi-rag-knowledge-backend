@@ -35,3 +35,12 @@ class UserRead(BaseModel):
     # 会专门去识别类里面的 model_config，然后根据里面的配置改变这个模型的行为。
     # Pydantic 官方文档也写了，Pydantic 模型就是继承 BaseModel 的类，
     # 并通过类型注解定义字段
+
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str
+    user: UserRead

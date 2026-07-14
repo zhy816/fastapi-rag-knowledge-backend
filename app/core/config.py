@@ -11,6 +11,11 @@ class Settings(BaseSettings):
     # 那 Settings() 就会自动把它们读进来。
     OPENAI_API_KEY: str
 
+    JWT_SECRET_KEY: str
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    # 默认值的作用是：算法和过期时间即使没配置也有默认值；但 JWT_SECRET_KEY 没有默认值，强制项目必须提供密钥，避免误用固定密钥。
+
     # 意思是：告诉 Pydantic，去项目根目录找 .env 文件。
     model_config = SettingsConfigDict(
         env_file=".env",

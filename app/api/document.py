@@ -1,7 +1,7 @@
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import delete, select
 
@@ -26,6 +26,10 @@ from app.services.text_splitter import split_text
 from app.services.embedding_service import embedding_service
 from app.services.vector_store import vector_store
 from app.services.rag_service import rag_service
+from app.api.dependencies import (
+    get_current_user,
+    get_current_user_document,
+)
 
 router = APIRouter(
     prefix="/documents",
@@ -44,23 +48,10 @@ ALLOWED_FILE_TYPES = {"pdf", "docx", "txt"}
 # 这里的 / 不是数学除法，而是 Path 对象重载过的路径拼接。
 @router.post("/upload", response_model=DocumentRead)
 async def upload_document(
-    user_id: int = Form(...), # 前端要传一个 user_id，而且它来自表单数据
-        # 这个 ... 表示：必填项。 这个Form表示 这个参数从表单字段里拿，而且必须传
-        # 从表单里取普通文本。
-    file: UploadFile = File(...), # 从表单里取上传文件。 这个就是表单里上传文件的功能
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    # 第一，检查用户是否存在：
-    stmt = select(User).where(User.id == user_id)
-    result = await db.execute(stmt)
-    user = result.scalar_one_or_none()
-
-    if user is None:
-        raise HTTPException(
-            status_code=404,
-            detail="User not found",
-        )
-
     original_filename = Path(file.filename).name
     file_type = Path(original_filename).suffix.lower().lstrip(".")
 
@@ -94,7 +85,7 @@ async def upload_document(
 
     # 它是在创建一个 Python 对象，这个对象代表 documents 表里的一条新记录
     db_document = Document(
-        user_id=user_id,
+        user_id=current_user.id,
         filename=original_filename,
         file_path=str(saved_path),
         file_type=file_type,
@@ -111,14 +102,16 @@ async def upload_document(
 
 # 这个就是返回数据库中保存的所有的曾经上传过的文件的记录
 @router.get("/", response_model=list[DocumentRead])
+@router.get("/", response_model=list[DocumentRead])
 async def list_documents(
-    user_id: int | None = None,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = select(Document)
-
-    if user_id is not None:
-        stmt = stmt.where(Document.user_id == user_id)
+    stmt = (
+        select(Document)
+        .where(Document.user_id == current_user.id)
+        .order_by(Document.create_time.desc())
+    )
 
     result = await db.execute(stmt)
     documents = result.scalars().all()
@@ -138,17 +131,9 @@ async def list_documents(
 @router.post("/{document_id}/parse", response_model=DocumentParseResult)
 async def parse_document(
     document_id: int,
+    document: Document = Depends(get_current_user_document),
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = select(Document).where(Document.id == document_id)
-    result = await db.execute(stmt)
-    document = result.scalar_one_or_none()
-
-    if document is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Document not found",
-        )
 
     document.status = "processing"
     await db.commit()
@@ -232,17 +217,9 @@ async def parse_document(
 @router.get("/{document_id}/chunks", response_model=list[DocumentChunkRead])
 async def list_document_chunks(
     document_id: int,
+    document: Document = Depends(get_current_user_document),
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = select(Document).where(Document.id == document_id)
-    result = await db.execute(stmt)
-    document = result.scalar_one_or_none()
-
-    if document is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Document not found",
-        )
 
     stmt = (
         select(DocumentChunk)
@@ -260,18 +237,9 @@ async def list_document_chunks(
 )
 async def vectorize_document(
     document_id: int,
+    document: Document = Depends(get_current_user_document),
     db: AsyncSession = Depends(get_db),
 ):
-    # 1. 查询文档是否存在
-    stmt = select(Document).where(Document.id == document_id)
-    result = await db.execute(stmt)
-    document = result.scalar_one_or_none()
-
-    if document is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Document not found",
-        )
 
     # 2. 查询这份文档的所有 chunks
     stmt = (
@@ -331,19 +299,8 @@ async def vectorize_document(
 async def search_document(
     document_id: int,
     request: DocumentSearchRequest,
-    db: AsyncSession = Depends(get_db),
+    document: Document = Depends(get_current_user_document),
 ):
-    # 1. 检查文档是否存在
-    stmt = select(Document).where(Document.id == document_id)
-    result = await db.execute(stmt)
-    document = result.scalar_one_or_none()
-
-    if document is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Document not found",
-        )
-
     # 2. 检查用户的问题是否为空
     if not request.query.strip():
         raise HTTPException(
@@ -402,19 +359,8 @@ async def search_document(
 # 这个就是根据输入的文件的id 查找并返回具体的文件对象
 @router.get("/{document_id}", response_model=DocumentRead)
 async def get_document(
-    document_id: int,
-    db: AsyncSession = Depends(get_db),
+    document: Document = Depends(get_current_user_document),
 ):
-    stmt = select(Document).where(Document.id == document_id)
-    result = await db.execute(stmt)
-    document = result.scalar_one_or_none()
-
-    if document is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Document not found",
-        )
-
     return document
 
 @router.post(
@@ -424,18 +370,8 @@ async def get_document(
 async def ask_document(
     document_id: int,
     request: DocumentAskRequest,
-    db: AsyncSession = Depends(get_db),
+    document: Document = Depends(get_current_user_document),
 ):
-    # 1. 检查文档是否存在
-    stmt = select(Document).where(Document.id == document_id)
-    result = await db.execute(stmt)
-    document = result.scalar_one_or_none()
-
-    if document is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Document not found",
-        )
 
     # 2. 检查用户问题是否为空
     if not request.question.strip():

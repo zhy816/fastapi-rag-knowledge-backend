@@ -21,6 +21,9 @@
 - OpenAI Python SDK
 - OpenAI Responses API
 - GPT-5.4 mini
+- pwdlib / Argon2
+- PyJWT
+- JWT Bearer Authentication
 
 ## 当前进度
 
@@ -148,6 +151,28 @@
 - 历史消息按照创建时间正序返回
 - 已完成正常创建、默认标题、RAG 问答、历史查询、错误用户、错误会话、会话归属和空问题测试
 
+### 阶段 8A：JWT 登录鉴权与数据权限隔离 ✅
+
+已完成：
+
+- 使用 `PyJWT` 实现 JWT access token 的签发与验证
+- 使用 `HS256` 对 Token 进行签名
+- Token 使用 `sub` 保存用户 ID，并通过 `exp` 控制过期时间
+- 将 JWT 密钥、签名算法和 Token 有效期保存到 `.env`
+- 实现用户登录接口：`POST /users/login`
+- 实现当前用户查询接口：`GET /users/me`
+- 新增 `get_current_user` 依赖，统一解析 Bearer Token 并查询当前用户
+- 登录失败时统一返回 `401 Incorrect username or password`
+- 缺少、伪造或无效 Token 时返回 `401`
+- 移除公开的用户列表和任意用户 ID 查询接口
+- 文档上传不再接收前端传入的 `user_id`，自动使用当前登录用户
+- 文档列表只返回当前用户拥有的文档
+- 新增文档归属检查依赖，统一保护文档查询、解析、切分、向量化、检索和问答接口
+- 创建聊天会话和会话问答不再接收前端传入的 `user_id`
+- 用户历史会话接口调整为：`GET /chat/sessions`
+- 会话历史消息和会话问答均校验会话归属
+- 已完成正确登录、错误密码、无 Token、伪造 Token、文档越权和聊天会话越权测试
+
 ## 当前计划
 
 - [x] 初始化项目结构
@@ -162,3 +187,7 @@
 - [x] 实现语义检索
 - [x] 接入大模型并实现 RAG 问答
 - [x] 保存聊天历史
+- [x] 实现 JWT 登录鉴权
+- [x] 实现文档与聊天会话权限隔离
+- [ ] 实现前端页面
+- [ ] 完善项目展示与运行说明

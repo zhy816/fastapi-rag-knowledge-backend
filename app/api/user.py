@@ -1,11 +1,20 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.core.security import get_password_hash
+from app.api.dependencies import get_current_user
+from app.core.security import (
+    create_access_token,
+    get_password_hash,
+    verify_password,
+)
 from app.db.session import get_db
 from app.models.user import User
-from app.schemas.user import UserCreate, UserRead
+from app.schemas.user import (
+    TokenResponse,
+    UserCreate,
+    UserLogin,
+    UserRead,
+)
 
 
 router = APIRouter(
@@ -51,37 +60,39 @@ async def register_user(
     # 7. 返回用户信息
     return db_user
 
-@router.get("/{user_id}", response_model=UserRead)
-async def get_user(
-    user_id: int,
+@router.post("/login", response_model=TokenResponse)
+async def login_user(
+    user_login: UserLogin,
     db: AsyncSession = Depends(get_db),
 ):
-    # 1. 根据 user_id 查询用户
-    stmt = select(User).where(User.id == user_id)
+    # 1. 根据用户名查询用户
+    stmt = select(User).where(User.username == user_login.username)
     result = await db.execute(stmt)
     user = result.scalar_one_or_none()
 
-    # 2. 如果用户不存在，返回 404
-    if user is None:
+    # 2. 用户不存在或密码不正确，都返回相同错误
+    if user is None or not verify_password(
+        user_login.password,
+        user.password_hash,
+    ):
         raise HTTPException(
-            status_code=404,
-            detail="User not found",
+            status_code=401,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # 3. 如果用户存在，返回用户信息
-    return user
+    # 3. 密码正确，根据用户 ID 生成 JWT
+    access_token = create_access_token(user.id)
 
+    # 4. 返回 Token 和用户基本信息
+    return TokenResponse(
+        access_token=access_token,
+        token_type="bearer",
+        user=user,
+    )
 
-@router.get("/", response_model=list[UserRead])
-async def list_users(
-    db: AsyncSession = Depends(get_db),
+@router.get("/me", response_model=UserRead)
+async def get_me(
+    current_user: User = Depends(get_current_user),
 ):
-    # 1. 查询所有用户
-    stmt = select(User)
-    result = await db.execute(stmt)
-
-    # 2. scalars() 取出 User 对象，all() 转成列表
-    users = result.scalars().all()
-
-    # 3. 返回用户列表
-    return users
+    return current_user

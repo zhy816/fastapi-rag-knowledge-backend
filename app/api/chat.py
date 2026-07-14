@@ -15,6 +15,7 @@ from app.schemas.chat import (
 from app.services.chat_service import chat_service
 from app.services.rag_service import rag_service
 
+from app.api.dependencies import get_current_user
 router = APIRouter(
     tags=["chat"],
 )
@@ -26,19 +27,9 @@ router = APIRouter(
 )
 async def create_chat_session(
     request: ChatSessionCreate,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    user_stmt = select(User).where(
-        User.id == request.user_id
-    )
-    user_result = await db.execute(user_stmt)
-    user = user_result.scalar_one_or_none()
-
-    if user is None:
-        raise HTTPException(
-            status_code=404,
-            detail="User not found",
-        )
 
     document_stmt = select(Document).where(
         Document.id == request.document_id
@@ -52,10 +43,10 @@ async def create_chat_session(
             detail="Document not found",
         )
 
-    if document.user_id != request.user_id:
+    if document.user_id != current_user.id:
         raise HTTPException(
             status_code=403,
-            detail="Document does not belong to this user",
+            detail="Document does not belong to current user",
         )
 
     title = request.title.strip()
@@ -68,7 +59,7 @@ async def create_chat_session(
 
     chat_session = await chat_service.create_session(
         db=db,
-        user_id=request.user_id,
+        user_id=current_user.id,
         document_id=request.document_id,
         title=title,
     )
@@ -81,6 +72,7 @@ async def create_chat_session(
 )
 async def ask_in_chat(
     request: ChatAskRequest,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     chat_session = await chat_service.get_session(
@@ -94,10 +86,10 @@ async def ask_in_chat(
             detail="Chat session not found",
         )
 
-    if chat_session.user_id != request.user_id:
+    if chat_session.user_id != current_user.id:
         raise HTTPException(
             status_code=403,
-            detail="Chat session does not belong to this user",
+            detail="Chat session does not belong to current user",
         )
 
     question = request.question.strip()
@@ -136,29 +128,17 @@ async def ask_in_chat(
     )
 
 @router.get(
-    "/users/{user_id}/chat-sessions",
+    "/chat/sessions",
     response_model=list[ChatSessionRead],
 )
 # 会先检查用户是否存在，然后返回该用户全部会话。按照我们在 ChatService 中写的排序，最新会话排在最前面。
 async def get_user_chat_sessions(
-    user_id: int,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    user_stmt = select(User).where(
-        User.id == user_id
-    )
-    user_result = await db.execute(user_stmt)
-    user = user_result.scalar_one_or_none()
-
-    if user is None:
-        raise HTTPException(
-            status_code=404,
-            detail="User not found",
-        )
-
     chat_sessions = await chat_service.get_user_sessions(
         db=db,
-        user_id=user_id,
+        user_id=current_user.id,
     )
 
     return chat_sessions
@@ -171,6 +151,7 @@ async def get_user_chat_sessions(
 # 会先检查会话是否存在，然后按时间正序返回历史消息。
 async def get_chat_session_messages(
     session_id: int,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     chat_session = await chat_service.get_session(
@@ -182,6 +163,11 @@ async def get_chat_session_messages(
         raise HTTPException(
             status_code=404,
             detail="Chat session not found",
+        )
+    if chat_session.user_id != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Chat session does not belong to current user",
         )
 
     messages = await chat_service.get_session_messages(
