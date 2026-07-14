@@ -4,6 +4,7 @@ from app.db.base import Base
 from app.db.session import async_engine
 from app.api.user import router as user_router
 from app.api.document import router as document_router
+from app.api.chat import router as chat_router
 
 
 @asynccontextmanager
@@ -25,6 +26,7 @@ app = FastAPI(
 )
 app.include_router(user_router)
 app.include_router(document_router)
+app.include_router(chat_router)
 
 @app.get("/")
 async def root():
